@@ -2,7 +2,7 @@ from django.db import models as db_models
 from django.shortcuts import get_object_or_404
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
+from rest_framework.permissions import AllowAny, IsAuthenticated, IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter
@@ -37,6 +37,8 @@ class ForumThreadViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ('update', 'partial_update', 'destroy'):
             return [IsAdminOrAuthor()]
+        if self.action == 'replies':
+            return [AllowAny()]
         return [IsAuthenticatedOrReadOnly()]
 
     def perform_create(self, serializer):

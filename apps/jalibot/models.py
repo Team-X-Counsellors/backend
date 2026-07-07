@@ -25,6 +25,7 @@ class JalibotConversation(models.Model):
     message_count_this_hour = models.PositiveSmallIntegerField(default=0)
     hour_window_start = models.DateTimeField(auto_now_add=True)
     language = models.CharField(max_length=5, default='en')
+    title = models.CharField(max_length=120, blank=True, default='')
 
     class Meta:
         db_table = 'jalibot_conversation'
@@ -36,3 +37,37 @@ class JalibotConversation(models.Model):
     def __str__(self):
         label = self.user.username if self.user else f"anon:{self.anonymous_session_id}"
         return f"JaliBot:{label}"
+
+
+class JalibotMemory(models.Model):
+    class Category(models.TextChoices):
+        ACADEMIC = 'academic', 'Academic'
+        EMOTIONAL = 'emotional', 'Emotional'
+        FAMILY = 'family', 'Family'
+        CAREER = 'career', 'Career'
+        OTHER = 'other', 'Other'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # Required — memories with no owner are a privacy liability, not a useful record
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='jalibot_memories',
+    )
+    content = models.CharField(max_length=300)
+    category = models.CharField(max_length=20, choices=Category.choices, default=Category.OTHER)
+    source_conversation = models.ForeignKey(
+        JalibotConversation,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='extracted_memories',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'jalibot_memory'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.user.username}: {self.content[:40]}"

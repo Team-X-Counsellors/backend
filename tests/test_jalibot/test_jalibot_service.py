@@ -78,7 +78,7 @@ class TestJalibotService:
 
         from api.services.jalibot_service import JalibotService
         service = JalibotService()
-        result = service.chat(message='Another message', user=student_user)
+        result = service.chat(message='Another message', user=student_user, conversation_id=str(convo.id))
 
         assert 'limit' in result['reply'].lower()
         # Gemini client should NOT have been called

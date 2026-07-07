@@ -71,23 +71,31 @@ class JalibotService:
             conversation.save(update_fields=['message_count_this_hour', 'hour_window_start'])
         return conversation.message_count_this_hour < settings.JALIBOT_RATE_LIMIT
 
-    def _get_or_create_conversation(self, user, anonymous_session, language):
+    def _get_or_create_conversation(self, user, anonymous_session, language, conversation_id=None):
         from apps.jalibot.models import JalibotConversation
-        if user:
-            conversation, _ = JalibotConversation.objects.get_or_create(
-                user=user,
-                defaults={'language': language},
-            )
-        else:
-            conversation, _ = JalibotConversation.objects.get_or_create(
-                anonymous_session_id=anonymous_session.id,
-                user=None,
-                defaults={'language': language},
-            )
-        return conversation
 
-    def chat(self, message: str, language: str = 'en', user=None, anonymous_session=None) -> dict:
-        conversation = self._get_or_create_conversation(user, anonymous_session, language)
+        if conversation_id:
+            owner_filter = {'user': user} if user else {'anonymous_session_id': anonymous_session.id, 'user': None}
+            try:
+                conversation = JalibotConversation.objects.get(id=conversation_id, **owner_filter)
+                timeout = timedelta(minutes=settings.JALIBOT_CONVERSATION_TIMEOUT_MINUTES)
+                if timezone.now() - conversation.last_message_at <= timeout:
+                    return conversation
+            except JalibotConversation.DoesNotExist:
+                pass
+
+        # No conversation_id (or a stale/invalid one): start a fresh conversation.
+        # Callers that want to resume an existing conversation must pass its id explicitly.
+        if user:
+            return JalibotConversation.objects.create(user=user, language=language)
+        return JalibotConversation.objects.create(
+            anonymous_session_id=anonymous_session.id,
+            user=None,
+            language=language,
+        )
+
+    def chat(self, message: str, language: str = 'en', user=None, anonymous_session=None, conversation_id=None) -> dict:
+        conversation = self._get_or_create_conversation(user, anonymous_session, language, conversation_id)
 
         if not self._check_rate_limit(conversation):
             return {
@@ -112,10 +120,14 @@ class JalibotService:
                 parts=[self._types.Part(text=msg['content'])],
             ))
 
+        system_instruction = SYSTEM_PROMPT
+        if user:
+            system_instruction = self._with_memory_context(SYSTEM_PROMPT, user)
+
         chat = self._client.chats.create(
             model=self._model_name,
             config=self._types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
+                system_instruction=system_instruction,
             ),
             history=history,
         )
@@ -138,6 +150,9 @@ class JalibotService:
                 }
             raise
 
+        if not conversation.messages and not conversation.title:
+            conversation.title = message[:60] + ('…' if len(message) > 60 else '')
+
         now_iso = timezone.now().isoformat()
         conversation.messages.append({'role': 'user', 'content': message, 'timestamp': now_iso})
         conversation.messages.append({'role': 'model', 'content': reply_text, 'timestamp': now_iso})
@@ -158,9 +173,82 @@ class JalibotService:
             anonymous_session.crisis_flagged = True
             anonymous_session.save(update_fields=['crisis_flagged'])
 
+        if user and len(conversation.messages) % 10 == 0:
+            self._extract_and_store_memories(user, conversation)
+
         return {
             'reply': reply_text,
             'crisis_detected': crisis_detected,
             'referred_to_counselor': referred,
             'conversation_id': str(conversation.id),
         }
+
+    def _with_memory_context(self, base_prompt: str, user) -> str:
+        from apps.jalibot.models import JalibotMemory
+
+        memories = list(
+            JalibotMemory.objects.filter(user=user).order_by('-created_at')[:15]
+        )
+        if not memories:
+            return base_prompt
+        facts = '\n'.join(f'- {m.content}' for m in memories)
+        return f"{base_prompt}\n\nWhat you remember about this student:\n{facts}"
+
+    def extract_facts(self, messages: list[dict]) -> list[dict]:
+        """Ask Gemini for 0-3 short durable facts worth remembering from recent turns."""
+        transcript = '\n'.join(f"{m['role']}: {m['content']}" for m in messages)
+        prompt = (
+            "From the conversation excerpt below, extract 0 to 3 short, durable facts worth "
+            "remembering about the student for future conversations (e.g. goals, ongoing struggles, "
+            "family/academic context). Skip anything trivial or already obvious. "
+            "Return a JSON array of objects with 'content' (a short sentence, max 300 chars) and "
+            "'category' (one of: academic, emotional, family, career, other). "
+            "Return an empty array if nothing durable stands out.\n\n"
+            f"Conversation:\n{transcript}"
+        )
+        try:
+            response = self._client.models.generate_content(
+                model=self._model_name,
+                contents=prompt,
+                config=self._types.GenerateContentConfig(
+                    response_mime_type='application/json',
+                    max_output_tokens=300,
+                ),
+            )
+            import json
+            facts = json.loads(response.text)
+            return facts if isinstance(facts, list) else []
+        except Exception:
+            return []
+
+    def _extract_and_store_memories(self, user, conversation) -> None:
+        from apps.jalibot.models import JalibotMemory
+
+        recent_messages = conversation.messages[-10:]
+        facts = self.extract_facts(recent_messages)
+        if not facts:
+            return
+
+        existing = list(
+            JalibotMemory.objects.filter(user=user).order_by('-created_at')[:20]
+            .values_list('content', flat=True)
+        )
+        existing_lower = [e.lower() for e in existing]
+
+        new_memories = []
+        for fact in facts:
+            content = str(fact.get('content', '')).strip()[:300]
+            if not content or content.lower() in existing_lower:
+                continue
+            category = fact.get('category')
+            if category not in dict(JalibotMemory.Category.choices):
+                category = JalibotMemory.Category.OTHER
+            new_memories.append(JalibotMemory(
+                user=user,
+                content=content,
+                category=category,
+                source_conversation=conversation,
+            ))
+
+        if new_memories:
+            JalibotMemory.objects.bulk_create(new_memories)

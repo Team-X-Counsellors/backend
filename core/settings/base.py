@@ -156,6 +156,7 @@ GEMINI_API_KEY = config('GEMINI_API_KEY', default='')
 GEMINI_MODEL = config('GEMINI_MODEL', default='gemini-2.0-flash')
 SHADOW_SESSION_TTL_HOURS = config('SHADOW_SESSION_TTL_HOURS', default=24, cast=int)
 JALIBOT_RATE_LIMIT = config('JALIBOT_RATE_LIMIT', default=30, cast=int)
+JALIBOT_CONVERSATION_TIMEOUT_MINUTES = config('JALIBOT_CONVERSATION_TIMEOUT_MINUTES', default=45, cast=int)
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 LANGUAGE_CODE = 'en-us'
