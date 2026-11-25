@@ -39,3 +39,4 @@ htmlcov/
 
 # Backup files
 *.bak
+.venv/

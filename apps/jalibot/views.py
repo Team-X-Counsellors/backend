@@ -84,6 +84,12 @@ class JalibotConversationDetailView(APIView):
             'messages': conversation.messages,
         })
 
+    def delete(self, request, conversation_id):
+        """A student can delete any of their own chats for good."""
+        conversation = get_object_or_404(JalibotConversation, id=conversation_id, user=request.user)
+        conversation.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 class JalibotMemoryListView(APIView):
     permission_classes = [IsAuthenticated]

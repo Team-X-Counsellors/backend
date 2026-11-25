@@ -72,3 +72,11 @@ def counselor_client(api_client, counselor_user):
 def admin_client(api_client, admin_user):
     api_client.force_authenticate(user=admin_user)
     return api_client
+
+
+@pytest.fixture(autouse=True)
+def _reset_throttle_cache():
+    """Rate-limit counters live in the cache; don't let one test's requests count against the next."""
+    from django.core.cache import cache
+    cache.clear()
+    yield

@@ -16,6 +16,8 @@ class CustomUser(AbstractUser):
     consent_given = models.BooleanField(default=False)
     consent_given_at = models.DateTimeField(null=True, blank=True)
     is_anonymous_allowed = models.BooleanField(default=True)
+    # Google's stable, never-reused account id (the ID token `sub` claim). Never key on email.
+    google_sub = models.CharField(max_length=64, unique=True, null=True, blank=True)
     profile_photo = models.ImageField(upload_to='profiles/', null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

@@ -12,6 +12,8 @@ urlpatterns = [
     path('api/appointments/', include('apps.sessions.urls', namespace='sessions')),
     path('api/library/', include('apps.library.urls', namespace='library')),
     path('api/circle/', include('apps.circle.urls', namespace='circle')),
+    path('api/assessments/', include('apps.assessments.urls', namespace='assessments')),
+    path('api/referrals/', include('apps.referrals.urls', namespace='referrals')),
     path('api/admin/', include('api.admin_urls', namespace='jalimind_admin')),
 ]
 

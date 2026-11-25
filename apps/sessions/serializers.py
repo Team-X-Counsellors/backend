@@ -26,11 +26,25 @@ class AppointmentDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Appointment
         fields = [
-            'id', 'student_name', 'counselor', 'counselor_name',
+            'id', 'student_id', 'student_name', 'counselor', 'counselor_name',
             'scheduled_at', 'duration_minutes', 'status', 'session_type',
-            'notes', 'meeting_link', 'created_at', 'updated_at',
+            'notes', 'counselor_notes', 'meeting_link', 'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'student_name', 'counselor_name', 'created_at']
+        read_only_fields = [
+            'id', 'student_id', 'student_name', 'counselor_name', 'counselor_notes',
+            'meeting_link', 'created_at',
+        ]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # Clinical notes are for the counsellor (and admins) only. Never leak them to the student,
+        # and fail closed when there is no request context.
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        allowed = bool(user and user.is_authenticated and user.role in ('counselor', 'admin', 'superadmin'))
+        if not allowed:
+            data.pop('counselor_notes', None)
+        return data
 
     def get_counselor_name(self, obj):
         if obj.counselor:

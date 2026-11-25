@@ -29,8 +29,27 @@ class AnonymousSession(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     pseudonym = models.CharField(max_length=40, unique=True)
     token_hash = models.CharField(max_length=64)
+    class Status(models.TextChoices):
+        WAITING = 'waiting', 'Waiting for a counsellor'
+        ACTIVE = 'active', 'With a counsellor'
+        CLOSED = 'closed', 'Closed'
+
+    class Topic(models.TextChoices):
+        GENERAL = 'general', 'Just need to talk'
+        ACADEMIC = 'academic', 'School / exams'
+        ANXIETY = 'anxiety', 'Anxiety or low mood'
+        RELATIONSHIPS = 'relationships', 'Relationships / family'
+        MONEY = 'money', 'Money worries'
+        URGENT = 'urgent', 'I need help now'
+
     # Stored as plain UUID — no FK constraint to counselors table
     referred_counselor_id = models.UUIDField(null=True, blank=True)
+    # The counsellor who claimed this chat. Plain UUID (no FK) so the privacy guarantee
+    # holds: nothing here can ever be joined to a student account.
+    assigned_counselor_id = models.UUIDField(null=True, blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.WAITING)
+    topic = models.CharField(max_length=15, choices=Topic.choices, default=Topic.GENERAL)
+    claimed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
     ended_at = models.DateTimeField(null=True, blank=True)

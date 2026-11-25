@@ -82,6 +82,10 @@ In your Render service dashboard, go to **Environment** and add each variable:
 | `DATABASE_URL` | Your Neon connection string | From Neon dashboard |
 | `GEMINI_API_KEY` | Your production Gemini key | From Google AI Studio |
 | `GEMINI_MODEL` | `gemini-2.5-flash` | |
+| `OPENAI_API_KEY` | | Optional backup AI. Used when Gemini fails or runs out of quota |
+| `OPENAI_MODEL` | `gpt-4o-mini` | |
+| `CLAUDE_API_KEY` | | Optional backup AI (also accepts `ANTHROPIC_API_KEY`). Tried after Gemini and OpenAI |
+| `CLAUDE_MODEL` | `claude-sonnet-5-5` | |
 | `CORS_ALLOWED_ORIGINS` | `https://your-frontend.netlify.app` | Your Netlify URL |
 | `SHADOW_SESSION_TTL_HOURS` | `24` | |
 | `JALIBOT_RATE_LIMIT` | `30` | |
@@ -234,3 +238,30 @@ Render's free web service **spins down after 15 minutes of inactivity**. The fir
 | `daphne: command not found` | Ensure `daphne` is in `requirements.txt` |
 | 500 on first request | Check Render logs — usually a missing env var |
 | Gemini 429 errors | Your API key hit free-tier limits — check quota at [ai.dev/rate-limit](https://ai.dev/rate-limit) |
+
+---
+
+## Railway (current production setup)
+
+Backend runs on Railway, frontend on Netlify (`https://jalimind.netlify.app`).
+
+**Start/release:** the `Procfile` runs migrations on release and starts `daphne` (needed for WebSockets: live chat and video calls). If Railway ignores the Procfile, set the start command to
+`daphne -b 0.0.0.0 -p $PORT core.asgi:application`.
+
+**Variables (Railway -> Variables):**
+
+| Key | Value |
+|---|---|
+| `DJANGO_SETTINGS_MODULE` | `core.settings.production` |
+| `SECRET_KEY`, `DATABASE_URL`, `GEMINI_API_KEY` | as before |
+| `ALLOWED_HOSTS` | your `*.up.railway.app` domain (and custom domain if any) |
+| `CORS_ALLOWED_ORIGINS` | `https://jalimind.netlify.app` |
+| `GOOGLE_CLIENT_ID` | Google OAuth web client ID. Add `https://jalimind.netlify.app` under *Authorized JavaScript origins* in Google Cloud. |
+| `FRONTEND_URL` | `https://jalimind.netlify.app` |
+| `REDIS_URL` | Add Railway's Redis plugin. Required if you ever run more than one instance. |
+| `WHATSAPP_NUMBER` | optional, digits only |
+| `CALL_TURN_URL` / `_USERNAME` / `_CREDENTIAL` | optional but recommended for reliable video calls |
+
+**Netlify:** set `NEXT_PUBLIC_API_URL` to the Railway URL and `NEXT_PUBLIC_GOOGLE_CLIENT_ID` to the same client ID, then redeploy.
+
+**First deploy:** run `python manage.py seed_demo --force --password "<choose one>"` once for demo counsellors, campus offices and library items (skip if you create real counsellors in the admin).

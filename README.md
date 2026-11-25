@@ -1,431 +1,135 @@
 # JaliMind Backend
 
-Django 6 + Django REST Framework API powering the JaliMind guidance and counselling platform for African university students.
+Django 6 + Django REST Framework + Channels API for JaliMind, the guidance and counselling platform for African university students. See the [root README](../README.md) for the product overview.
 
----
+## Contents
 
-## Table of Contents
+- [Stack](#stack) · [Structure](#structure) · [Setup](#setup) · [Environment](#environment)
+- [API](#api) · [Real-time](#real-time) · [Anonymous chat](#anonymous-chat) · [JaliBot](#jalibot)
+- [Tests](#tests) · [Roles](#roles)
 
-- [Overview](#overview)
-- [Tech Stack](#tech-stack)
-- [Project Structure](#project-structure)
-- [Prerequisites](#prerequisites)
-- [Installation](#installation)
-- [Environment Variables](#environment-variables)
-- [Database Setup](#database-setup)
-- [Running the Server](#running-the-server)
-- [API Reference](#api-reference)
-- [Authentication](#authentication)
-- [Shadow Chat — Privacy Architecture](#shadow-chat--privacy-architecture)
-- [JaliBot — Gemini Integration](#jalibot--gemini-integration)
-- [Running Tests](#running-tests)
-- [Role-Based Access Control](#role-based-access-control)
-
----
-
-## Overview
-
-JaliMind is an AI-powered mental health and guidance platform built specifically for university students across Africa. The backend provides:
-
-- JWT-authenticated REST API with role-based access control
-- JaliBot: Gemini-powered AI counselling companion (multilingual, crisis detection)
-- Shadow Chat: cryptographically anonymous sessions — unlinkable to any user identity
-- Appointment booking system with counsellor profiles
-- Jali Library: curated mental health resources
-- JaliMind Circle: peer support forum
-- Audit logging and admin reporting
-
----
-
-## Tech Stack
+## Stack
 
 | Layer | Technology |
 |---|---|
-| Framework | Django 6.0.6 + Django REST Framework |
-| Auth | JWT via `djangorestframework-simplejwt` |
-| Database | PostgreSQL (Neon cloud) via `psycopg` (psycopg3) |
-| AI | Google Gemini via `google-genai` SDK |
-| Async | Celery + Redis (background tasks) |
-| WebSocket | Django Channels + Daphne (ASGI) |
-| CORS | `django-cors-headers` |
+| Framework | Django 6, Django REST Framework |
+| Auth | JWT (`djangorestframework-simplejwt`) + Google sign-in (ID token) |
+| Real-time | Django Channels + Daphne (ASGI); Redis layer in production |
+| AI | Gemini (`google-genai`), OpenAI, Anthropic Claude (see [JaliBot](#jalibot)) |
+| Database | PostgreSQL in production, SQLite in development and tests |
 | Config | `python-decouple` |
 
----
-
-## Project Structure
+## Structure
 
 ```
 backend/
-├── core/
-│   ├── settings/
-│   │   ├── base.py          # Shared settings
-│   │   ├── development.py   # Dev: Neon PostgreSQL or SQLite fallback
-│   │   ├── production.py    # Prod: PostgreSQL + HTTPS security headers
-│   │   └── testing.py       # Tests: SQLite in-memory (fast, isolated)
-│   ├── urls.py              # Root URL routing
-│   ├── asgi.py              # ASGI entry point (Channels)
-│   ├── wsgi.py              # WSGI entry point
-│   └── celery.py            # Celery app
-│
+├── core/                 settings (base/development/production/testing), urls, asgi, routing
 ├── apps/
-│   ├── users/               # CustomUser model, JWT auth, registration
-│   ├── counselors/          # CounselorProfile, availability slots
-│   ├── sessions/            # Appointment booking + reviews (label: booking_sessions)
-│   ├── shadow_chat/         # Anonymous sessions — NO FK to users table
-│   ├── jalibot/             # JalibotConversation, Gemini chat history
-│   ├── library/             # Resource model (articles, videos, workbooks)
-│   └── circle/              # ForumCategory, ForumThread, ForumReply, AuditLog
-│
+│   ├── users/            custom user, JWT, Google login
+│   ├── counselors/       profiles, availability, bookable times, counsellor dashboard, seed_demo
+│   ├── sessions/         appointments (label: booking_sessions), reviews, call consumer
+│   ├── shadow_chat/      anonymous chat, counsellor queue, AI cover (no FK to users)
+│   ├── jalibot/          conversations, memories
+│   ├── assessments/      check-in instruments and results
+│   ├── library/          resources      ├── circle/  peer forum   └── referrals/  campus help
 ├── api/
-│   ├── permissions.py       # RBAC permission classes
-│   ├── admin_urls.py        # Admin-only endpoints
-│   └── services/
-│       └── jalibot_service.py  # Gemini API integration + crisis detection
-│
-├── tests/
-│   ├── conftest.py          # Shared fixtures (student, counselor, admin users)
-│   ├── test_auth/           # Registration, login, role enforcement
-│   ├── test_shadow/         # Privacy guarantee tests (no FK to users)
-│   └── test_jalibot/        # Gemini mock tests, crisis detection, rate limits
-│
-├── manage.py
-├── requirements.txt
-├── pytest.ini
-└── .env                     # Never commit this file
+│   ├── permissions.py    role classes
+│   ├── admin_*.py        admin endpoints
+│   └── services/         jalibot_service.py (provider chain), claude_provider.py
+└── tests/                51 tests: auth, shadow, jalibot, new features
 ```
 
----
-
-## Prerequisites
-
-- Python 3.11+
-- Git
-- A Gemini API key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
-- PostgreSQL database (the project uses [Neon](https://neon.tech) — free serverless Postgres)
-- Redis (optional in development — only needed for Celery background tasks)
-
----
-
-## Installation
-
-### 1. Clone the repository
+## Setup
 
 ```bash
-git clone <repository-url>
-cd jalimind/backend
-```
-
-### 2. Create and activate a virtual environment
-
-```bash
-python -m venv venv
-
-# Windows
-venv\Scripts\activate
-
-# macOS / Linux
-source venv/bin/activate
-```
-
-### 3. Install dependencies
-
-```bash
+cd backend
+python -m venv .venv && .venv\Scripts\activate     # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-### 4. Create your environment file
-
-```bash
 cp .env.example .env
-```
-
-Then fill in the values — see [Environment Variables](#environment-variables) below.
-
-### 5. Apply database migrations
-
-```bash
 python manage.py migrate --settings=core.settings.development
-```
-
-### 6. Create a superuser (optional)
-
-```bash
-python manage.py createsuperuser --settings=core.settings.development
-```
-
----
-
-## Environment Variables
-
-Create a `.env` file in the `backend/` directory:
-
-```env
-# Django
-SECRET_KEY=your-secret-key-here-change-in-production
-DEBUG=True
-ALLOWED_HOSTS=127.0.0.1,localhost
-
-# Gemini AI
-GEMINI_API_KEY=your-gemini-api-key
-GEMINI_MODEL=gemini-2.5-flash
-
-# Database — Neon PostgreSQL connection string
-DATABASE_URL=postgresql://user:password@host/dbname?sslmode=require
-
-# Redis (Celery + Django Channels)
-REDIS_URL=redis://localhost:6379/0
-
-# CORS
-CORS_ALLOWED_ORIGINS=http://localhost:3000
-
-# Shadow Chat session lifetime
-SHADOW_SESSION_TTL_HOURS=24
-
-# JaliBot messages per user per hour
-JALIBOT_RATE_LIMIT=30
-```
-
-**If `DATABASE_URL` is not set**, the development settings fall back to a local SQLite database (`db.sqlite3`).
-
----
-
-## Database Setup
-
-The project targets **PostgreSQL** (Neon) in all environments except tests.
-
-### Neon (recommended)
-
-1. Create a free project at [neon.tech](https://neon.tech)
-2. Copy the connection string from the Neon dashboard
-3. Paste it as `DATABASE_URL` in your `.env`
-
-### SQLite fallback (quick local dev)
-
-Remove or leave `DATABASE_URL` blank — the server will use `db.sqlite3` automatically.
-
-### Migrations
-
-```bash
-# Run all migrations
-python manage.py migrate --settings=core.settings.development
-
-# Generate migrations after model changes
-python manage.py makemigrations --settings=core.settings.development
-
-# Note: the sessions app uses label 'booking_sessions' (avoids conflict with Django's built-in sessions)
-python manage.py makemigrations booking_sessions --settings=core.settings.development
-```
-
----
-
-## Running the Server
-
-```bash
+python manage.py seed_demo --settings=core.settings.development   # optional demo counsellors
 python manage.py runserver --settings=core.settings.development
 ```
 
-The API will be available at `http://localhost:8000`.
+Served at `http://localhost:8000` (admin at `/admin/`). Restart after code changes; if the autoreloader crashes, use `runserver --noreload`. With no database settings, development uses SQLite (`db.sqlite3`).
 
-Django Admin: `http://localhost:8000/admin/`
+## Environment
 
----
+Copy `.env.example`. The important variables:
 
-## API Reference
+| Variable | Purpose |
+|---|---|
+| `SECRET_KEY`, `DEBUG`, `ALLOWED_HOSTS` | Django |
+| `GEMINI_API_KEY`, `GEMINI_MODEL` (default `gemini-2.5-flash`) | First AI provider |
+| `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-4o-mini`) | Second provider |
+| `ANTHROPIC_API_KEY` or `CLAUDE_API_KEY`, `CLAUDE_MODEL` (default `claude-sonnet-5-5`) | Third provider |
+| `JALIBOT_RATE_LIMIT` (30), `JALIBOT_MAX_OUTPUT_TOKENS` (160) | JaliBot limits |
+| `SHADOW_SESSION_TTL_HOURS` (24), `SHADOW_AI_FALLBACK_SECONDS` (45) | Anonymous chat |
+| `GOOGLE_CLIENT_ID` | Google sign-in (public web client ID only) |
+| `CORS_ALLOWED_ORIGINS`, `FRONTEND_URL`, `WHATSAPP_NUMBER` | Frontend integration |
+| `REDIS_URL`, `CALL_TURN_URL/USERNAME/CREDENTIAL` | Production live chat and calls behind strict networks |
+| `DB_*`, `EMAIL_*` | Production database and email |
 
-All endpoints are prefixed with `/api/`.
+At least one AI key is needed for JaliBot. Never commit `.env`.
 
-### Authentication — `/api/auth/`
+## API
 
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| POST | `/api/auth/register/` | None | Register new user (returns JWT) |
-| POST | `/api/auth/login/` | None | Login (returns access + refresh tokens) |
-| POST | `/api/auth/refresh/` | None | Refresh access token |
-| POST | `/api/auth/logout/` | JWT | Blacklist refresh token |
-| GET | `/api/auth/me/` | JWT | Current user profile |
-| PATCH | `/api/auth/me/` | JWT | Update profile |
+All routes are under `/api/`.
 
-### JaliBot — `/api/jalibot/`
+| Area | Routes |
+|---|---|
+| Auth `/auth/` | `register/`, `login/`, `refresh/`, `logout/`, `google/`, `me/` |
+| JaliBot `/jalibot/` | `POST chat/`, `GET history/`, `GET/DELETE history/{id}/`, `memories/`, `memories/{id}/` |
+| Anonymous chat `/shadow/` | `POST start/`, `GET/DELETE session/{id}/`, `POST session/{id}/message/`, counsellor: `GET queue/`, `POST queue/{id}/claim/`, `counselor/{id}/` |
+| Counsellors `/counselors/` | directory and detail, `{id}/times/`, `me/`, `me/availability/`, `dashboard/`, `students/` |
+| Appointments `/appointments/` | list, detail, status updates (role-scoped) |
+| Check-ins `/assessments/` | instruments, `{key}/submit/`, `results/`, `results/{id}/share/`, `shared/` |
+| Library, Circle, Referrals | `/library/`, `/circle/{categories,threads}/`, `/referrals/`, `/referrals/resources/`, `/referrals/whatsapp/` |
+| Admin `/admin/` | reports, users, audit logs |
 
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| POST | `/api/jalibot/chat/` | JWT or Anonymous | Send message, receive AI reply |
-| GET | `/api/jalibot/history/` | JWT | Retrieve conversation history |
+`POST /api/jalibot/chat/` takes `{message, conversation_id?}` and returns `{reply, crisis_detected, conversation_id}`. Replies may contain Markdown.
 
-**Request body:**
-```json
-{
-  "message": "I'm feeling overwhelmed with exams",
-  "language": "en"
-}
-```
+## Real-time
 
-**Response:**
-```json
-{
-  "reply": "I hear you...",
-  "crisis_detected": false,
-  "referred_to_counselor": false,
-  "conversation_id": "uuid"
-}
-```
+WebSockets (`core/routing.py`):
 
-### Shadow Chat — `/api/shadow/`
+- `ws/shadow/<session_id>/`: anonymous chat events (messages, crisis, closed)
+- `ws/call/<appointment_id>/`: WebRTC signalling for 1:1 calls
 
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| POST | `/api/shadow/start/` | None | Start anonymous session |
-| GET | `/api/shadow/session/{id}/` | X-Shadow-Token header | Get session details |
-| DELETE | `/api/shadow/session/{id}/` | X-Shadow-Token header | End session |
-| POST | `/api/shadow/session/{id}/message/` | X-Shadow-Token header | Send message |
+Production needs Redis (`REDIS_URL`) so chat and calls work across processes, and a TURN server for calls from restrictive networks.
 
-**Start session response:**
-```json
-{
-  "session_id": "uuid",
-  "pseudonym": "BoldHarambee_7392",
-  "token": "one-time-raw-token",
-  "expires_at": "2026-07-06T12:00:00Z"
-}
-```
+## Anonymous chat
 
-The raw token is returned **once only** and never stored. Include it in subsequent requests as `X-Shadow-Token: <token>`.
+- `AnonymousSession` has **no foreign key to any user**. A random token is returned once; only its SHA-256 hash is stored and compared in constant time.
+- Students get a random nickname, topics, and a "need help now" priority lane. Sessions expire (24h by default) and can be wiped by the student.
+- Counsellors see a queue and claim a chat. The chat then belongs to them.
+- **AI cover:** if a chat is flagged critical (or topic is urgent), nobody has claimed it, and either no counsellor is available or 45s have passed, JaliBot replies as "JaliBot (AI)", points to the helplines at the top of the chat, and stops the moment a counsellor claims it. It is stateless: it reads the transcript only. If every provider fails, a static safe message is sent.
+- Crisis keywords (several languages and phrasings) flag the chat for counsellors.
 
-### Counselors — `/api/counselors/`
+## JaliBot
 
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| GET | `/api/counselors/` | JWT | List all counselors (filterable) |
-| GET | `/api/counselors/{id}/` | JWT | Counselor detail |
-| POST | `/api/counselors/{id}/book/` | JWT (Student) | Book appointment |
+`api/services/jalibot_service.py` calls providers through one `_complete()` chain: **Gemini → OpenAI → Claude**, moving on after any error (quota, outage, missing key). Any single key is enough.
 
-### Appointments — `/api/appointments/`
+- Short, practical replies; light Markdown (bold, short numbered lists); says it is an AI once, in the first reply.
+- Multilingual (English, Swahili, French, Hausa, Igbo, Twi).
+- Crisis handling: keyword list plus a model-side flag (`[[CRISIS]]` marker, stripped before display). The reply refers to the helplines the app pins; the model never types phone numbers. Crisis replies get extra token room so nothing is cut off.
+- Persistent conversations (`history/`), deletable by their owner, plus long-term "memories" with extraction.
+- Per-user rate limit (`JALIBOT_RATE_LIMIT`).
 
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| GET | `/api/appointments/` | JWT | List (role-scoped) |
-| GET | `/api/appointments/{id}/` | JWT | Detail |
-| PATCH | `/api/appointments/{id}/` | JWT | Update status |
+The pinned helpline list lives in `apps/shadow_chat/services.py`. Verify the numbers before launch.
 
-### Library — `/api/library/`
-
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| GET | `/api/library/` | JWT | List resources (searchable, filterable) |
-| POST | `/api/library/` | JWT (Counselor/Admin) | Upload resource |
-
-### Circle Forum — `/api/circle/`
-
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| GET | `/api/circle/threads/` | JWT | List threads |
-| POST | `/api/circle/threads/` | JWT | Create thread |
-| GET | `/api/circle/threads/{id}/replies/` | JWT | List replies |
-| POST | `/api/circle/threads/{id}/replies/` | JWT | Post reply |
-| GET | `/api/circle/categories/` | JWT | List categories |
-
-### Admin — `/api/admin/`
-
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| GET | `/api/admin/reports/utilization/` | Admin | Platform utilization report |
-| GET | `/api/admin/users/` | Admin | All users |
-| POST | `/api/admin/users/{id}/deactivate/` | Admin | Deactivate user |
-| GET | `/api/admin/audit-logs/` | Admin | Audit log |
-
----
-
-## Authentication
-
-The API uses **JWT Bearer tokens**.
-
-```http
-Authorization: Bearer <access_token>
-```
-
-Tokens contain custom claims:
-```json
-{
-  "user_id": 1,
-  "role": "student",
-  "university": "University of Nairobi",
-  "full_name": "Amara Osei"
-}
-```
-
-Access tokens expire after **1 hour**. Use the refresh endpoint to get a new one. Refresh tokens expire after **7 days** and are rotated + blacklisted on use.
-
----
-
-## Shadow Chat — Privacy Architecture
-
-Shadow Chat is the fully anonymous support channel. The privacy guarantee is enforced at the database level:
-
-- `AnonymousSession` has **no ForeignKey to any user table** — this is a hard architectural constraint
-- A one-time random token (`secrets.token_urlsafe(32)`) is generated at session start
-- Only the **SHA-256 hash** of the token is stored — the raw token is returned to the client once and discarded
-- Token verification uses `secrets.compare_digest()` to prevent timing attacks
-- Sessions expire after 24 hours (configurable via `SHADOW_SESSION_TTL_HOURS`)
-- Expired sessions are hard-deleted every 15 minutes via Celery Beat
-- The `referred_counselor_id` field is a plain UUID with no FK constraint — preserving anonymity even when counsellor referrals occur
-
-Pseudonyms are generated from African word lists (e.g. `BoldHarambee_7392`, `CalmBaobab_4851`).
-
----
-
-## JaliBot — Gemini Integration
-
-JaliBot uses the `google-genai` SDK (not the deprecated `google-generativeai`).
-
-**Model:** `gemini-2.5-flash` (configurable via `GEMINI_MODEL`)
-
-**Features:**
-- Full conversation history sent with each request
-- Multilingual: English, Swahili, French, Hausa, Igbo, Twi
-- Crisis keyword detection in all supported languages — triggers counsellor referral
-- Per-user rate limiting: 30 messages/hour (configurable via `JALIBOT_RATE_LIMIT`)
-- Graceful 429 handling — returns a user-friendly message instead of a 500 error
-
-**Crisis hotlines embedded in system prompt:**
-- Kenya: Befrienders Kenya — +254 722 178 177
-- Nigeria: SURPIN — +234 806 210 6493
-- Ghana: Mental Health Authority — 0800 111 222
-- South Africa: SADAG — 0800 456 789
-
----
-
-## Running Tests
-
-Tests use SQLite in-memory (not Neon) for speed and isolation.
+## Tests
 
 ```bash
-# Run all tests
-pytest tests/
-
-# Run specific test categories
-pytest tests/test_auth/        # RBAC and authentication
-pytest tests/test_shadow/      # Privacy guarantee (no FK to users)
-pytest tests/test_jalibot/     # Gemini mock tests
-
-# Verbose output
-pytest tests/ -v
+pytest -q        # 51 tests, SQLite in memory, AI calls faked
 ```
 
-Expected output: **28 tests passing in ~4 seconds**.
-
----
-
-## Role-Based Access Control
+## Roles
 
 | Role | Access |
 |---|---|
-| `student` | JaliBot, Shadow Chat, Library (read), Circle, book appointments |
-| `counselor` | Library (write), view assigned appointments, respond in Shadow Chat |
-| `admin` | All of the above + user management, audit logs, reports |
-| `superadmin` | Full platform access |
+| `student` | JaliBot, anonymous chat, booking, check-ins, library, Circle |
+| `counselor` | Dashboard, queue and claim, schedule and availability, students, sessions, library write |
+| `admin` / `superadmin` | Everything above plus users, audit logs, reports |
 
-Permission classes are in [`api/permissions.py`](api/permissions.py):
-- `IsStudent`, `IsCounselor`, `IsAdmin`, `IsSuperAdmin`
-- `IsCounselorOrAdmin` — combined check
-- `IsAdminOrAuthor` — object-level: admin or the resource author
-- `IsAnonymousSessionOwner` — validates `X-Shadow-Token` header
+Permission classes are in `api/permissions.py`.

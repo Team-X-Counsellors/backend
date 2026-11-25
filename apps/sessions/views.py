@@ -30,18 +30,67 @@ class AppointmentViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action == 'create':
             return [IsStudent()]
-        return [IsAuthenticated()]
+        # Honour the per-action permission_classes set by @action (confirm/decline/complete are
+        # counsellor-only). Returning a flat IsAuthenticated here used to override them.
+        return [perm() for perm in self.permission_classes]
 
     def perform_update(self, serializer):
         user = self.request.user
-        instance = self.get_object()
         if user.is_student():
-            # Students can only cancel their own appointments
-            new_status = serializer.validated_data.get('status')
-            if new_status and new_status != Appointment.Status.CANCELLED:
-                from rest_framework.exceptions import PermissionDenied
+            from rest_framework.exceptions import PermissionDenied
+            # Students may only cancel; they cannot reschedule, retype, or edit the call link.
+            if set(serializer.validated_data) - {'status'} or \
+                    serializer.validated_data.get('status') != Appointment.Status.CANCELLED:
                 raise PermissionDenied('Students can only cancel appointments.')
         serializer.save()
+
+    def _transition(self, request, allowed_from, new_status):
+        appt = self.get_object()
+        if appt.status not in allowed_from:
+            return None, Response({'error': f'Cannot do that while the session is {appt.status}.'},
+                                  status=status.HTTP_400_BAD_REQUEST)
+        appt.status = new_status
+        return appt, None
+
+    @action(detail=True, methods=['post'], permission_classes=[IsCounselor])
+    def confirm(self, request, pk=None):
+        appt, err = self._transition(request, (Appointment.Status.PENDING,), Appointment.Status.CONFIRMED)
+        if err:
+            return err
+        if appt.session_type in (Appointment.SessionType.VIDEO, Appointment.SessionType.VOICE):
+            appt.meeting_link = f'/call/{appt.id}'  # in-app call room, no third-party link needed
+        appt.save()
+        return Response(AppointmentDetailSerializer(appt).data)
+
+    @action(detail=True, methods=['post'], permission_classes=[IsCounselor])
+    def decline(self, request, pk=None):
+        appt, err = self._transition(
+            request, (Appointment.Status.PENDING, Appointment.Status.CONFIRMED), Appointment.Status.CANCELLED)
+        if err:
+            return err
+        appt.cancellation_reason = str(request.data.get('reason', ''))[:300]
+        appt.save()
+        return Response(AppointmentDetailSerializer(appt).data)
+
+    @action(detail=True, methods=['post'], permission_classes=[IsCounselor])
+    def complete(self, request, pk=None):
+        appt, err = self._transition(
+            request, (Appointment.Status.CONFIRMED, Appointment.Status.IN_PROGRESS), Appointment.Status.COMPLETED)
+        if err:
+            return err
+        appt.counselor_notes = str(request.data.get('counselor_notes', appt.counselor_notes))[:5000]
+        appt.save()
+        appt.counselor.total_sessions = appt.counselor.counselor_appointments.filter(
+            status=Appointment.Status.COMPLETED).count()
+        appt.counselor.save(update_fields=['total_sessions'])
+        return Response(AppointmentDetailSerializer(appt).data)
+
+    @action(detail=True, methods=['post', 'patch'], permission_classes=[IsCounselor], url_path='notes')
+    def notes(self, request, pk=None):
+        appt = self.get_object()
+        appt.counselor_notes = str(request.data.get('counselor_notes', ''))[:5000]
+        appt.save(update_fields=['counselor_notes', 'updated_at'])
+        return Response(AppointmentDetailSerializer(appt).data)
 
     @action(detail=True, methods=['post'], permission_classes=[IsStudent])
     def review(self, request, pk=None):
