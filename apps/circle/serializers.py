@@ -44,7 +44,7 @@ class ForumReplySerializer(serializers.ModelSerializer):
             'id', 'thread', 'author_display', 'body',
             'parent_reply', 'is_moderated', 'created_at',
         ]
-        read_only_fields = ['id', 'is_moderated', 'created_at']
+        read_only_fields = ['id', 'thread', 'is_moderated', 'created_at']
 
     def get_author_display(self, obj):
         if obj.author:

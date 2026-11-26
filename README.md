@@ -36,7 +36,7 @@ backend/
 │   ├── permissions.py    role classes
 │   ├── admin_*.py        admin endpoints
 │   └── services/         jalibot_service.py (provider chain), claude_provider.py
-└── tests/                51 tests: auth, shadow, jalibot, new features
+└── tests/                53 tests: auth, shadow, jalibot, new features
 ```
 
 ## Setup
@@ -121,7 +121,7 @@ The pinned helpline list lives in `apps/shadow_chat/services.py`. Verify the num
 ## Tests
 
 ```bash
-pytest -q        # 51 tests, SQLite in memory, AI calls faked
+pytest -q        # 53 tests, SQLite in memory, AI calls faked
 ```
 
 ## Roles

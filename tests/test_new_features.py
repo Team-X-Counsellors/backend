@@ -318,3 +318,28 @@ def test_anonymous_chat_flags_new_crisis_phrases(ai_cover):
     c, sid, h = _start()
     c.post(f'/api/shadow/session/{sid}/message/', {'content': 'I just want to end it all'}, format='json', **h)
     assert c.get(f'/api/shadow/session/{sid}/', **h).json()['crisis_flagged'] is True
+
+
+def test_circle_reply_needs_only_body(student_client):
+    """The frontend sends just {body}; the thread comes from the URL (regression: 400 'thread required')."""
+    from apps.circle.models import ForumCategory, ForumThread
+    user = student_client.handler._force_user
+    cat = ForumCategory.objects.create(name='General', slug='general')
+    thread = ForumThread.objects.create(title='t', body='b', category=cat, author=user)
+    r = student_client.post(f'/api/circle/threads/{thread.id}/replies/', {'body': 'try'}, format='json')
+    assert r.status_code == 201, r.content
+    child = student_client.post(
+        f'/api/circle/threads/{thread.id}/replies/', {'body': 'nested', 'parent_reply': r.json()['id']}, format='json')
+    assert child.status_code == 201, child.content
+    assert len(student_client.get(f'/api/circle/threads/{thread.id}/replies/').json()) == 2
+
+
+def test_student_can_book_a_listed_time(student_client, counselor_user):
+    profile = counselor_user.counselor_profile
+    day = _next_weekday_slot(profile)
+    times = student_client.get(f'/api/counselors/{profile.id}/times/?date={day}').json()['times']
+    r = student_client.post(
+        f'/api/counselors/{profile.id}/book/',
+        {'scheduled_at': times[0], 'session_type': 'video', 'duration_minutes': 60, 'notes': 'hi'}, format='json')
+    assert r.status_code == 201, r.content
+    assert len(student_client.get(f'/api/counselors/{profile.id}/times/?date={day}').json()['times']) == 2
